@@ -74,6 +74,14 @@ class Store::Digest::HTTP
     out
   end
 
+  # this will do for now
+  def serialize_query hash
+    hash.to_a.map do |pair|
+      k, *v = pair.flatten
+      v.map { |x| [k.to_s, x.to_s].join ?= }
+    end.flatten.join(?&).gsub(/\+/, '%2B')
+  end
+
   BASE      = /^\/+\.well-known\/+[dn]i\/+/.freeze
   POST_RAW  = '0c17e171-8cb1-4c60-9c58-f218075ae9a9'.freeze
   POST_FORM = '12d851b7-5f71-405c-bb44-bd97b318093a'.freeze
@@ -132,7 +140,7 @@ class Store::Digest::HTTP
     end
 
     # set headers
-    type = obj.type
+    type = obj.type.dup # note the type comes out frozen
     type << ";charset=#{obj.charset}" if obj.charset
     resp.set_header 'Content-Type',     type
     resp.set_header 'Content-Encoding', obj.encoding if obj.encoding
@@ -148,12 +156,15 @@ class Store::Digest::HTTP
   DISPATCH[:stats][:GET] = -> uri, query, hdrs, body = nil do
     stats = store.stats
 
+    pri = store.primary
+
     sections = stats.label_struct.map do |slug, values|
       label, values = values
       { [
          { [label] => :h2 },
          { values.map { |val, count|
-            href = "sha-256/?#{slug}=#{val}"
+            q = serialize_query({ slug => val})
+            href = "#{pri}/?#{q}"
 
             { { [ { [val] => :code }, ': ',
               { [count] => :var }] => :a, href: href } => :li } } => :ul },
@@ -182,10 +193,18 @@ class Store::Digest::HTTP
     [200, [['Content-Type', 'application/xhtml+xml;charset=utf-8']], doc.to_xml]
   end
 
-  THEAD = { ['Digest', 'Media Type', 'Language', 'Character Set', 'Encoding',
+  THEAD = { [
+    'Digest', 'Size', 'Media Type', 'Language', 'Character Set', 'Encoding',
     'Added to Store', 'Modified', 'Metadata Changed', 'Deleted?'].map do |x|
       { [x] => :th }
     end => :thead }.freeze
+
+  LINKS = {
+    first: ['First', ?[],
+    prev:  ['Previous', ?-],
+    next:  ['Next', ?=],
+    last:  ['Last', ?]],
+  }
 
   DISPATCH[:collection][:GET] = -> uri, query, hdrs, body = nil do
     # parse query components
@@ -195,7 +214,7 @@ class Store::Digest::HTTP
     unless query[:boundary]
       q = uri.query || ''
       q << ?& unless q.empty?
-      q << 'boundary=1&boundary=100'
+      q << serialize_query({ boundary: [1, 100] })
       uri.query = q
       return [307, [['Location', uri.to_s]], []]
     end
@@ -213,7 +232,8 @@ class Store::Digest::HTTP
     tr  = tr.slice(offset, limit).map do |obj|
       td = [{ [{ [obj[store.primary].hexdigest] => :a,
         href: obj[store.primary].b64digest }] => :td }] +
-        %i[type language charset encoding ctime mtime ptime dtime].map do |p|
+        %i[type size language charset encoding
+        ctime mtime ptime dtime].map do |p|
         v = obj.send(p)
         v = v.is_a?(Time) ? v.getgm.iso8601 : v.to_s
         { [v] => :td }
@@ -221,9 +241,38 @@ class Store::Digest::HTTP
       { td => :tr }
     end
 
+    links = {
+      # first is 1 .. limit, only active if offset > 0
+      first: offset > 0 ? [1, limit] : nil,
+      # prev is also only active if offset > 0 but will subtract by limit
+      prev:  offset > 0 ? [
+        (x = (offset - limit >= 0 ? offset - limit : 0)) + 1, x + limit] : nil,
+      # next is only active if len > offset + page
+      next:  (offset + limit) < len ?
+        [offset + limit + 1, 2 * limit + offset] : nil,
+      # last is also only active if len > offset + page and
+      last:  (offset + limit) < len ?
+        [(x = (len.to_f / limit).floor * limit) + 1, x + limit] : nil,
+    }.map do |rel, bound|
+      link = if bound
+               lab, ak = LINKS[rel]
+               # href = uri.dup
+               q = uri_query uri
+               q = serialize_query(q.merge({ boundary: bound }))
+               # href.query = q
+               { [lab] => :a, rel: rel,
+                accesskey: ak, href: "?#{q}" }
+             else
+               LINKS[rel].first
+             end
+      { [link] => :li }
+    end
+
+
     doc = XML::Mixup.xhtml_stub(
       title: "Listing stored objects",
-      content: { [ { [] => :caption }, THEAD, { tr => :tbody } ] => :table }
+      content: { [ { [ { links => :ul } ] => :caption },
+        THEAD, { tr => :tbody } ] => :table }
     ).document
 
     [200, [['Content-Type', 'application/xhtml+xml']], doc.to_xml]
@@ -253,60 +302,60 @@ class Store::Digest::HTTP
     body  = req.body
 
     # dispatch type
-    disp = if path.empty?
-             :stats
-           elsif store.algorithms.include?(algo = path.first.to_sym)
-             if slug = path[1]
-               if slug.empty?
-                 :collection
-               elsif !/^[0-9A-Za-z_-]+$/.match?(slug)
-                 return [404, [], []]
-               else
-                 # determine if we have a whole digest or just part of one
-                 algo = query[:algorithm] = path.first.to_sym
+    disp = nil
+    if path.empty?
+      disp = :stats
+    elsif store.algorithms.include?(algo = path.first.to_sym)
+      if slug = path[1]
+        if slug.empty?
+          disp = :collection
+        elsif !/^[0-9A-Za-z_-]+$/.match?(slug)
+          return [404, [], []]
+        else
+          # determine if we have a whole digest or just part of one
+          algo = query[:algorithm] = path.first.to_sym
 
-                 query[:digest] = slug
+          query[:digest] = slug
 
-                 if /^[0-9A-Za-z_-]+$/.match?(slug) and
-                     slug.length == (DIGESTS[algo] * 4/3.0).ceil
-                   :object
-                 elsif /^[0-9A-Fa-f]+$/.match?(slug) and
-                     slug.length == DIGESTS[algo] * 2
-                   query[:radix] = 16
+          if /^[0-9A-Za-z_-]+$/.match?(slug) and
+              slug.length == (DIGESTS[algo] * 4/3.0).ceil
+            disp = :object
+          elsif /^[0-9A-Fa-f]+$/.match?(slug) and
+              slug.length == DIGESTS[algo] * 2
+            query[:radix] = 16
 
-                   :object
-                 else
-                   :partial
-                 end
-               end
-             else
-               # redirect 307
-               newuri = req.base_url + "/.well-known/ni/#{algo}/"
-               return [307, [['Location', newuri.to_s]], []]
-             end
-           elsif path.first == post_raw
-             :raw
-           elsif path.first == post_form
-             # 415 unsupported media type
-             # XXX EXPLAIN THIS
-             return [415, [], []] unless
-               req.get_header('Content-Type') == 'multipart/form-data'
+            disp = :object
+          else
+            disp = :partial
+          end
+        end
+      else
+        # redirect 307
+        newuri = req.base_url + "/.well-known/ni/#{algo}/"
+        return [307, [['Location', newuri.to_s]], []]
+      end
+    elsif path.first == post_raw
+      disp = :raw
+    elsif path.first == post_form
+      # 415 unsupported media type
+      # XXX EXPLAIN THIS
+      return [415, [], []] unless
+        req.get_header('Content-Type') == 'multipart/form-data'
 
-             # 409 conflict
-             # XXX EXPLAIN THIS
-             return Rack::Response[409, [], []] unless
-               req.POST.values.any? do |f|
-               f.is_a? Rack::Multipart::UploadedFile 
-             end
+      # 409 conflict
+      # XXX EXPLAIN THIS
+      return Rack::Response[409, [], []] unless
+        req.POST.values.any? { |f|
+        f.is_a? Rack::Multipart::UploadedFile }
 
-             # XXX here is where we would set the date from the
-             # multipart header but rack doesn't have a way of doing this
+      # XXX here is where we would set the date from the
+      # multipart header but rack doesn't have a way of doing this
 
-             :raw
-           else
-             # 404 again  
-             return [404, [], []]
-           end
+      disp = :raw
+    else
+      # 404 again  
+      return [404, [], []]
+    end
 
     if methods = DISPATCH[disp]
       m = (req.request_method == 'HEAD' ? 'GET' : req.request_method).to_sym

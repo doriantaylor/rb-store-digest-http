@@ -7,45 +7,43 @@ require 'commander'
 require 'rack'
 
 
-if $0 == __FILE__
-  HOST    = '0.0.0.0'
-  PORT    = 10101
-  MAPSIZE = 2**30
+HOST    = '0.0.0.0'
+PORT    = 10101
+MAPSIZE = 2**30
 
-  Commander.configure do
-    program :name,        File.basename($0)
-    program :version,     Store::Digest::HTTP::VERSION
-    program :description, 'Command-line starter for Store::Digest::HTTP'
+Commander.configure do
+  program :name,        File.basename($0)
+  program :version,     Store::Digest::HTTP::VERSION
+  program :description, 'Command-line starter for Store::Digest::HTTP'
 
-    command :serve do |c|
-      c.option '-d', '--dir DIR', 'The root directory of the store'
-      c.option '-m', '--mapsize BYTES', 'The memory map size of the store'
-      c.option '-h', '--host NAME', "Specify host"
-      c.option '-p', '--port NUMBER', "Specify TCP port (default #{PORT})"
-      c.option '-z', '--detach', 'Detach and daemonize the process'
-      c.option '-F', '--fastcgi', 'Run as FastCGI rather than standalone'
+  command :serve do |c|
+    c.option '-d', '--dir DIR', 'The root directory of the store'
+    c.option '-m', '--mapsize BYTES', 'The memory map size of the store'
+    c.option '-h', '--host NAME', "Specify host"
+    c.option '-p', '--port NUMBER', "Specify TCP port (default #{PORT})"
+    c.option '-z', '--detach', 'Detach and daemonize the process'
+    c.option '-F', '--fastcgi', 'Run as FastCGI rather than standalone'
 
-      c.action do |args, opts|
-        opts.default :host => HOST, :port => PORT, :mapsize => MAPSIZE
+    c.action do |args, opts|
+      opts.default :host => HOST, :port => PORT, :mapsize => MAPSIZE
 
-        raise Commander::Runner::CommandError.new 'No root directory' unless
-          opts.dir
+      raise Commander::Runner::CommandError.new 'No root directory' unless
+        opts.dir
 
-        store = Store::Digest.new dir: opts.dir, mapsize: opts.mapsize
+      store = Store::Digest.new dir: opts.dir, mapsize: opts.mapsize
 
-        Rack::Server.start({
-          app:         Store::Digest::HTTP.new(store),
-          server:      opts.fastcgi ? 'fastcgi' : 'webrick',
-          environment: 'none',
-          daemonize:   opts.detach,
-          Host:        opts.host,
-          Port:        opts.port,
-        })
-      end
+      Rack::Server.start({
+        app:         Store::Digest::HTTP.new(store),
+        server:      opts.fastcgi ? 'fastcgi' : 'webrick',
+        environment: 'none',
+        daemonize:   opts.detach,
+        Host:        opts.host,
+        Port:        opts.port,
+      })
     end
-
-    default_command :serve
-
-    run!
   end
+
+  default_command :serve
+
+  run!
 end
