@@ -190,7 +190,8 @@ class Store::Digest::HTTP
           ] => :section } ] + sections,
     ).document
 
-    [200, [['Content-Type', 'application/xhtml+xml;charset=utf-8']], doc.to_xml]
+    Rack::Response[200,
+      { 'Content-Type' => 'application/xhtml+xml;charset=utf-8' }, doc.to_xml]
   end
 
   THEAD = { [
@@ -275,7 +276,8 @@ class Store::Digest::HTTP
         THEAD, { tr => :tbody } ] => :table }
     ).document
 
-    [200, [['Content-Type', 'application/xhtml+xml']], doc.to_xml]
+    Rack::Response[200,
+      { 'Content-Type' => 'application/xhtml+xml' }, doc.to_xml]
   end
 
   public
@@ -290,12 +292,18 @@ class Store::Digest::HTTP
   end
 
   def call env
+    # XXX maybe wrap this or put it in a base class i dunno
+    req = env.is_a?(Rack::Request) ? env : Rack::Request.new(env)
+
     # warn env.inspect
     # do surgery to request scheme
-    env['HTTPS'] = 'on' if
-      env['REQUEST_SCHEME'] and env['REQUEST_SCHEME'].downcase == 'https'
+    req.env['HTTPS'] = 'on' if req.env['REQUEST_SCHEME'] and
+      req.env['REQUEST_SCHEME'].downcase == 'https'
 
-    req   = Rack::Request.new env
+    handle(req).finish
+  end
+
+  def handle req
     uri   = URI(req.base_url) + env['REQUEST_URI']
     path  = uri.path.gsub(/^\/+\.well-known\/+ni\/+/, '').split(/\/+/, -1)
     query = uri_query uri # XXX req.GET is worthless
@@ -332,19 +340,19 @@ class Store::Digest::HTTP
       else
         # redirect 307
         newuri = req.base_url + "/.well-known/ni/#{algo}/"
-        return [307, [['Location', newuri.to_s]], []]
+        return Rack::Response[307, { 'Location' => newuri.to_s }, []]
       end
     elsif path.first == post_raw
       disp = :raw
     elsif path.first == post_form
       # 415 unsupported media type
       # XXX EXPLAIN THIS
-      return [415, [], []] unless
+      return Rack::Response[415, {}, []] unless
         req.get_header('Content-Type') == 'multipart/form-data'
 
       # 409 conflict
       # XXX EXPLAIN THIS
-      return Rack::Response[409, [], []] unless
+      return Rack::Response[409, {}, []] unless
         req.POST.values.any? { |f|
         f.is_a? Rack::Multipart::UploadedFile }
 
@@ -353,8 +361,8 @@ class Store::Digest::HTTP
 
       disp = :raw
     else
-      # 404 again  
-      return [404, [], []]
+      # 404 again
+      return Rack::Response[404, {}, []]
     end
 
     if methods = DISPATCH[disp]
@@ -365,17 +373,17 @@ class Store::Digest::HTTP
           resp = Rack::Response[*resp] if resp.is_a? Array
         rescue Exception => e
           warn "wah #{e}"
-          return [500, [], []]
+          return Rack::Response[500, {}, []]
         end
 
         resp.body = [] if req.request_method == 'HEAD'
 
-        return resp.to_a
+        return resp
       else
-        return [405, [], []]
+        return Rack::Response[405, {}, []]
       end
     else
-      return [404, [], []]
+      return Rack::Response[404, {}, []]
     end
   end
 end

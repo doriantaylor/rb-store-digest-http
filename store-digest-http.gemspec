@@ -6,10 +6,9 @@ Gem::Specification.new do |spec|
   spec.version       = Store::Digest::HTTP::VERSION
   spec.authors       = ["Dorian Taylor"]
   spec.email         = ["code@doriantaylor.com"]
-
-  spec.summary       = %q{HTTP front-end to Store::Digest}
+  spec.license       = 'Apache-2.0'
   spec.homepage      = "https://github.com/doriantaylor/rb-store-digest-http"
-  spec.required_ruby_version = Gem::Requirement.new(">= 2.3.0")
+  spec.summary       = %q{HTTP front-end to Store::Digest}
 
   spec.metadata["homepage_uri"] = spec.homepage
 
@@ -26,19 +25,19 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   # ruby
-  spec.required_ruby_version = '~> 2.0'
+  spec.required_ruby_version = '>= 2.7'
 
   # dev/test dependencies
-  spec.add_development_dependency 'bundler', '~> 2.1'
-  spec.add_development_dependency 'rake',    '~> 13.0'
-  spec.add_development_dependency 'rspec',   '~> 3.9'
+  spec.add_development_dependency 'bundler', '>= 2.1'
+  spec.add_development_dependency 'rake',    '>= 13.0'
+  spec.add_development_dependency 'rspec',   '>= 3.9'
 
   # stuff we use
-  spec.add_runtime_dependency 'rack',      '~> 2.2'
-  spec.add_runtime_dependency 'commander', '~> 4.5'
+  spec.add_runtime_dependency 'rack',      '>= 2.2'
+  spec.add_runtime_dependency 'commander', '>= 4.5'
 
   # stuff i wrote
-  spec.add_runtime_dependency 'store-digest', '>= 0.1.0'
-  spec.add_runtime_dependency 'uri-ni',       '>= 0.1.4'
-  spec.add_runtime_dependency 'xml-mixup',    '>= 0.1.13'
+  spec.add_runtime_dependency 'store-digest', '>= 0.1.4'
+  spec.add_runtime_dependency 'uri-ni',       '>= 0.1.5'
+  spec.add_runtime_dependency 'xml-mixup',    '>= 0.1.17'
 end
