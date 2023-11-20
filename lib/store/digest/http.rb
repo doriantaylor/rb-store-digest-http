@@ -95,7 +95,7 @@ class Store::Digest::HTTP
     ni  = URI('ni:///%s;%s' % query.values_at(:algorithm, :digest))
     obj = store.get ni
 
-    resp = Rack::Response[404, [], []]
+    resp = Rack::Response[404, {}, []]
 
     return resp unless obj
 
@@ -280,6 +280,20 @@ class Store::Digest::HTTP
       { 'Content-Type' => 'application/xhtml+xml' }, doc.to_xml]
   end
 
+  DISPATCH[:stats][:PUT] = -> uri, query, hdrs, body = nil do
+    type  = hdrs['Content-Type']
+    mtime = Time.httpdate(hdrs['HTTP_DATE']).getgm rescue nil
+
+    body = body.read
+
+    obj = @store.add body, type: type, mtime: mtime
+    uri = obj.digests[@store.primary]
+    out = uri.to_www https: uri.scheme.downcase == 'https',
+      authority: uri.authority
+
+    Rack::Response[303, { 'Location' => out.to_s }, []]
+  end
+
   public
 
   attr_reader :store, :post_raw, :post_form
@@ -304,7 +318,7 @@ class Store::Digest::HTTP
   end
 
   def handle req
-    uri   = URI(req.base_url) + env['REQUEST_URI']
+    uri   = URI(req.base_url) + req.env['REQUEST_URI']
     path  = uri.path.gsub(/^\/+\.well-known\/+ni\/+/, '').split(/\/+/, -1)
     query = uri_query uri # XXX req.GET is worthless
     body  = req.body
@@ -370,10 +384,10 @@ class Store::Digest::HTTP
       if func = methods[m]
         begin
           resp = instance_exec uri.dup, query, req.env.dup, body, &func
-          resp = Rack::Response[*resp] if resp.is_a? Array
+          resp = Rack::Response[*resp] unless resp.is_a? Rack::Response
         rescue Exception => e
           warn "wah #{e}"
-          return Rack::Response[500, {}, []]
+          return Rack::Response[500, {}, [e.backtrace.join("\n")]]
         end
 
         resp.body = [] if req.request_method == 'HEAD'
